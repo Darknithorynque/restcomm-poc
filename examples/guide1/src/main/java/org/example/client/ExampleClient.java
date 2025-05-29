@@ -1,20 +1,3 @@
-/*
- * JBoss, Home of Professional Open Source
- * Copyright XXXX, Red Hat Middleware LLC, and individual contributors as indicated
- * by the @authors tag. All rights reserved.
- * See the copyright.txt in the distribution for a full listing
- * of individual contributors.
- * This copyrighted material is made available to anyone wishing to use,
- * modify, copy, or redistribute it subject to the terms and conditions
- * of the GNU General Public License, v. 2.0.
- * This program is distributed in the hope that it will be useful, but WITHOUT A
- * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
- * PARTICULAR PURPOSE. See the GNU General Public License for more details.
- * You should have received a copy of the GNU General Public License,
- * v. 2.0 along with this distribution; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
- * MA 02110-1301, USA.
- */
 package org.example.client;
 
 import java.io.IOException;
@@ -32,15 +15,11 @@ import org.jdiameter.api.AvpDataException;
 import org.jdiameter.api.AvpSet;
 import org.jdiameter.api.Configuration;
 import org.jdiameter.api.EventListener;
-import org.jdiameter.api.IllegalDiameterStateException;
 import org.jdiameter.api.InternalException;
 import org.jdiameter.api.Message;
 import org.jdiameter.api.MetaData;
 import org.jdiameter.api.Network;
-import org.jdiameter.api.NetworkReqListener;
-import org.jdiameter.api.OverloadException;
 import org.jdiameter.api.Request;
-import org.jdiameter.api.RouteException;
 import org.jdiameter.api.Session;
 import org.jdiameter.api.SessionFactory;
 import org.jdiameter.api.Stack;
@@ -51,14 +30,12 @@ import org.mobicents.diameter.dictionary.AvpDictionary;
 import org.mobicents.diameter.dictionary.AvpRepresentation;
 
 public class ExampleClient implements EventListener<Request, Answer> {
-
   private static final Logger log = Logger.getLogger(ExampleClient.class);
-  static{
-      //configure logging.
-      configLog4j();
+  static {
+    configLog4j();
   }
 
-  private static void configLog4j() {
+    private static void configLog4j() {
     InputStream inStreamLog4j = ExampleClient.class.getClassLoader().getResourceAsStream("log4j.properties");
     Properties propertiesLog4j = new Properties();
     try {
@@ -66,14 +43,11 @@ public class ExampleClient implements EventListener<Request, Answer> {
       PropertyConfigurator.configure(propertiesLog4j);
     } catch (Exception e) {
       e.printStackTrace();
-    }finally
-    {
-      if(inStreamLog4j!=null)
-      {
+    } finally {
+      if (inStreamLog4j != null) {
         try {
           inStreamLog4j.close();
         } catch (IOException e) {
-          // TODO Auto-generated catch block
           e.printStackTrace();
         }
       }
@@ -81,40 +55,42 @@ public class ExampleClient implements EventListener<Request, Answer> {
     log.debug("log4j configured");
   }
 
-  //configuration files
   private static final String configFile = "org/example/client/client-jdiameter-config.xml";
   private static final String dictionaryFile = "org/example/client/dictionary.xml";
-  //our destination
   private static final String serverHost = "127.0.0.1";
   private static final String serverPort = "3868";
-  private static final String serverURI = "aaa://" + serverHost + ":" + serverPort;
-  //our realm
+  private static final String serverURI =  serverHost + ":" + serverPort;
   private static final String realmName = "exchange.example.org";
-  // definition of codes, IDs
-  private static final int commandCode = 686;
-  private static final long vendorID = 66666;
-  private static final long applicationID = 33333;
-  private ApplicationId authAppId = ApplicationId.createByAuthAppId(applicationID);
-  private static final int exchangeTypeCode = 888;
-  private static final int exchangeDataCode = 999;
-  // enum values for Exchange-Type AVP
-  private static final int EXCHANGE_TYPE_INITIAL = 0;
-  private static final int EXCHANGE_TYPE_INTERMEDIATE = 1;
-  private static final int EXCHANGE_TYPE_TERMINATING = 2;
-  //list of data we want to exchange.
-  private static final String[] TO_SEND = new String[] { "I want to get 3 answers", "This is second message", "Bye bye" };
-  //Dictionary, for informational purposes.
+  private static final int commandCode = 272;
+  private static final long applicationID = 4;
+  private static final int CC_REQUEST_TYPE = 416;
+  private static final int CC_REQUEST_NUMBER = 415;
+  private static final int REQUESTED_SERVICE_UNIT = 437;
+  private static final int GRANTED_SERVICE_UNIT = 431;
+  private static final int CC_TOTAL_OCTETS = 412;
+
+  private  String userName;
+  private  long initialUnits;
+  private  long updateUnits;
+  private long nextRequestNumber = 1;
   private AvpDictionary dictionary = AvpDictionary.INSTANCE;
-  //stack and session factory
   private Stack stack;
   private SessionFactory factory;
+  private Session session;
 
-  // ////////////////////////////////////////
-  // Objects which will be used in action //
-  // ////////////////////////////////////////
-  private Session session;  // session used as handle for communication
-  private int toSendIndex = 0;  //index in TO_SEND table
-  private boolean finished = false;  //boolean telling if we finished our interaction
+  public ExampleClient() {
+    Properties props = new Properties();
+    try (InputStream is = getClass().getClassLoader().getResourceAsStream("client.properties")) {
+      if (is != null) {
+        props.load(is);
+      }
+      this.userName = props.getProperty("user.name", "testuser");
+      this.initialUnits = Long.parseLong(props.getProperty("initial.units", "50"));
+      this.updateUnits = Long.parseLong(props.getProperty("update.units", "30"));
+    } catch (IOException e) {
+      log.error("Failed to load client.properties, using defaults", e);
+    }
+  }
 
   private void initStack() {
     if (log.isInfoEnabled()) {
@@ -122,57 +98,39 @@ public class ExampleClient implements EventListener<Request, Answer> {
     }
     InputStream is = null;
     try {
-      //Parse dictionary, it is used for user friendly info.
       dictionary.parseDictionary(this.getClass().getClassLoader().getResourceAsStream(dictionaryFile));
       log.info("AVP Dictionary successfully parsed.");
-
       this.stack = new StackImpl();
-      //Parse stack configuration
       is = this.getClass().getClassLoader().getResourceAsStream(configFile);
       Configuration config = new XMLConfiguration(is);
       factory = stack.init(config);
-      if (log.isInfoEnabled()) {
-        log.info("Stack Configuration successfully loaded.");
-      }
-      //Print info about applicatio
-      Set<org.jdiameter.api.ApplicationId> appIds = stack.getMetaData().getLocalPeer().getCommonApplications();
-
-      log.info("Diameter Stack  :: Supporting " + appIds.size() + " applications.");
-      for (org.jdiameter.api.ApplicationId x : appIds) {
-        log.info("Diameter Stack  :: Common :: " + x);
+      log.info("Stack Configuration successfully loaded.");
+      // Log peer details
+      MetaData metaData = stack.getMetaData();
+      log.info("Local Peer URI: " + metaData.getLocalPeer().getUri());
+      Set<ApplicationId> appIds = stack.getMetaData().getLocalPeer().getCommonApplications();
+      log.info("Diameter Stack :: Supporting " + appIds.size() + " applications.");
+      for (ApplicationId x : appIds) {
+        log.info("Diameter Stack :: Common :: " + x);
       }
       is.close();
-      //Register network req listener, even though we wont receive requests
-      //this has to be done to inform stack that we support application
       Network network = stack.unwrap(Network.class);
-      network.addNetworkReqListener(new NetworkReqListener() {
-
-        @Override
-        public Answer processRequest(Request request) {
-          //this wontbe called.
-          return null;
-        }
-      }, this.authAppId); //passing our example app id.
-
+      network.addNetworkReqListener(request -> null, ApplicationId.createByAuthAppId(applicationID));
     } catch (Exception e) {
-      e.printStackTrace();
+      log.error("Failed to initialize stack", e);
       if (this.stack != null) {
         this.stack.destroy();
       }
-
       if (is != null) {
         try {
           is.close();
         } catch (IOException e1) {
-          // TODO Auto-generated catch block
           e1.printStackTrace();
         }
       }
       return;
     }
-
     MetaData metaData = stack.getMetaData();
-    //ignore for now.
     if (metaData.getStackType() != StackType.TYPE_SERVER || metaData.getMinorVersion() <= 0) {
       stack.destroy();
       if (log.isEnabledFor(org.apache.log4j.Level.ERROR)) {
@@ -180,7 +138,6 @@ public class ExampleClient implements EventListener<Request, Answer> {
       }
       return;
     }
-
     try {
       if (log.isInfoEnabled()) {
         log.info("Starting stack");
@@ -190,7 +147,7 @@ public class ExampleClient implements EventListener<Request, Answer> {
         log.info("Stack is running.");
       }
     } catch (Exception e) {
-      e.printStackTrace();
+      log.error("Failed to start stack", e);
       stack.destroy();
       return;
     }
@@ -199,173 +156,108 @@ public class ExampleClient implements EventListener<Request, Answer> {
     }
   }
 
-  /**
-   * @return
-   */
-  private boolean finished() {
-    return this.finished;
-  }
-
-  /**
-   *
-   */
   private void start() {
     try {
-      //wait for connection to peer
-      try {
-        Thread.currentThread().sleep(5000);
-      } catch (InterruptedException e) {
-        // TODO Auto-generated catch block
-        e.printStackTrace();
-      }
-      //do send
-      this.session = this.factory.getNewSession("BadCustomSessionId;YesWeCanPassId;" + System.currentTimeMillis());
-      sendNextRequest(EXCHANGE_TYPE_INITIAL);
-    } catch (InternalException e) {
-      // TODO Auto-generated catch block
-      e.printStackTrace();
-    } catch (IllegalDiameterStateException e) {
-      // TODO Auto-generated catch block
-      e.printStackTrace();
-    } catch (RouteException e) {
-      // TODO Auto-generated catch block
-      e.printStackTrace();
-    } catch (OverloadException e) {
-      // TODO Auto-generated catch block
-      e.printStackTrace();
+      log.info("Waiting for server to initialize...");
+      Thread.sleep(15000); // Wait 15 seconds
+      log.info("Creating new session with ID: CC_SESSION_" + System.currentTimeMillis());
+      this.session = this.factory.getNewSession("CC_SESSION_" + System.currentTimeMillis());
+      log.info("Sending INITIAL CCR to " + serverURI);
+      sendCreditControlRequest(1, initialUnits);
+    } catch (Exception e) {
+      log.error("Failed to start client", e);
     }
-
   }
 
-  private void sendNextRequest(int enumType) throws InternalException, IllegalDiameterStateException, RouteException, OverloadException {
-    Request r = this.session.createRequest(commandCode, this.authAppId, realmName, serverURI);
-    // here we have all except our custom avps
-
-    AvpSet requestAvps = r.getAvps();
-    // code , value , vendor, mandatory,protected,isUnsigned32
-    // (Enumerated)
-    Avp exchangeType = requestAvps.addAvp(exchangeTypeCode, (long) enumType, vendorID, true, false, true); // value
-                                                        // is
-                                                        // set
-                                                        // on
-                                                        // creation
-    // code , value , vendor, mandatory,protected, isOctetString
-    Avp exchengeData = requestAvps.addAvp(exchangeDataCode, TO_SEND[toSendIndex++], vendorID, true, false, false); // value
-                                                            // is
-                                                            // set
-                                                            // on
-                                                            // creation
-    // send
-    this.session.send(r, this);
-    dumpMessage(r,true); //dump info on console
+  private void sendCreditControlRequest(int requestType, long requestedUnits) {
+    try {
+      Request request = session.createRequest(commandCode, ApplicationId.createByAuthAppId(applicationID), realmName, serverURI);
+      AvpSet avps = request.getAvps();
+      avps.addAvp(CC_REQUEST_TYPE, requestType, true, false);
+      avps.addAvp(CC_REQUEST_NUMBER, nextRequestNumber++, true, false);
+      avps.addAvp(Avp.USER_NAME, userName, true, false, false);
+      if (requestType == 1 || requestType == 2) {
+        AvpSet rsu = avps.addGroupedAvp(REQUESTED_SERVICE_UNIT, true, false);
+        rsu.addAvp(CC_TOTAL_OCTETS, requestedUnits, true, false);
+      }
+      session.send(request, this);
+      dumpMessage(request, true);
+    } catch (Exception e) {
+      log.error("Error sending request", e);
+    }
   }
 
-  /*
-   * (non-Javadoc)
-   *
-   * @see org.jdiameter.api.EventListener#receivedSuccessMessage(org.jdiameter
-   * .api.Message, org.jdiameter.api.Message)
-   */
   @Override
   public void receivedSuccessMessage(Request request, Answer answer) {
-    dumpMessage(answer,false);
-    if (answer.getCommandCode() != commandCode) {
-      log.error("Received bad answer: " + answer.getCommandCode());
-      return;
-    }
-    AvpSet answerAvpSet = answer.getAvps();
-
-    Avp exchangeTypeAvp = answerAvpSet.getAvp(exchangeTypeCode, vendorID);
-    Avp exchangeDataAvp = answerAvpSet.getAvp(exchangeDataCode, vendorID);
-    Avp resultAvp = answer.getResultCode();
-
-
+    dumpMessage(answer, false);
     try {
-      //for bad formatted request.
-      if (resultAvp.getUnsigned32() == 5005 || resultAvp.getUnsigned32() == 5004) {
-        // missing || bad value of avp
-        this.session.release();
-        this.session = null;
-        log.error("Something wrong happened at server side!");
-        finished = true;
+      AvpSet answerAvps = answer.getAvps();
+      long resultCode = answerAvps.getAvp(Avp.RESULT_CODE).getUnsigned32();
+      log.info("Received CCA with Result-Code: " + resultCode);
+      if (resultCode == 4010) { // CREDIT_LIMIT_REACHED
+        log.warn("Credit limit reached!");
+        sendCreditControlRequest(3, 0); // Terminate
+        return;
       }
-      switch ((int) exchangeTypeAvp.getUnsigned32()) {
-      case EXCHANGE_TYPE_INITIAL:
-        // JIC check;
-        String data = exchangeDataAvp.getUTF8String();
-        if (data.equals(TO_SEND[toSendIndex - 1])) {
-          // ok :) send next;
-          sendNextRequest(EXCHANGE_TYPE_INTERMEDIATE);
-        } else {
-          log.error("Received wrong Exchange-Data: " + data);
+      log.debug("Checking for Granted-Service-Unit in CCA");
+      if (answerAvps.getAvp(GRANTED_SERVICE_UNIT) != null) {
+        log.debug("Found Granted-Service-Unit, parsing CC-Total-Octets");
+        AvpSet gsu = answerAvps.getAvp(GRANTED_SERVICE_UNIT).getGrouped();
+        try {
+          long grantedUnits = gsu.getAvp(CC_TOTAL_OCTETS).getUnsigned32();
+          log.info("Granted units: " + grantedUnits);
+          long ccRequestType = answerAvps.getAvp(CC_REQUEST_TYPE).getUnsigned32();
+          if (ccRequestType == 1) { // INITIAL
+            Thread.sleep(2000);
+            sendCreditControlRequest(2, updateUnits);
+          } else if (ccRequestType == 2) { // UPDATE
+            Thread.sleep(2000);
+            sendCreditControlRequest(3, 0);
+          } else if (ccRequestType == 3) { // TERMINATE
+            session.release();
+            session = null;
+          }
+        } catch (AvpDataException e) {
+          log.error("Failed to parse CC-Total-Octets", e);
+          sendCreditControlRequest(3, 0); // Terminate on error
         }
-        break;
-      case EXCHANGE_TYPE_INTERMEDIATE:
-        // JIC check;
-        data = exchangeDataAvp.getUTF8String();
-        if (data.equals(TO_SEND[toSendIndex - 1])) {
-          // ok :) send next;
-          sendNextRequest(EXCHANGE_TYPE_TERMINATING);
-        } else {
-          log.error("Received wrong Exchange-Data: " + data);
-        }
-        break;
-      case EXCHANGE_TYPE_TERMINATING:
-        data = exchangeDataAvp.getUTF8String();
-        if (data.equals(TO_SEND[toSendIndex - 1])) {
-          // good, we reached end of FSM.
-          finished = true;
-          // release session and its resources.
-          this.session.release();
-          this.session = null;
-        } else {
-          log.error("Received wrong Exchange-Data: " + data);
-        }
-        break;
-      default:
-        log.error("Bad value of Exchange-Type avp: " + exchangeTypeAvp.getUnsigned32());
-        break;
+      } else {
+        log.warn("No Granted-Service-Unit found in CCA");
+        sendCreditControlRequest(3, 0); // Terminate on error
       }
-    } catch (AvpDataException e) {
-      // thrown when interpretation of byte[] fails
-      e.printStackTrace();
-    } catch (InternalException e) {
-      // TODO Auto-generated catch block
-      e.printStackTrace();
-    } catch (IllegalDiameterStateException e) {
-      // TODO Auto-generated catch block
-      e.printStackTrace();
-    } catch (RouteException e) {
-      // TODO Auto-generated catch block
-      e.printStackTrace();
-    } catch (OverloadException e) {
-      // TODO Auto-generated catch block
-      e.printStackTrace();
+    } catch (Exception e) {
+      log.error("Error processing answer", e);
+      sendCreditControlRequest(3, 0); // Terminate on error
     }
-
   }
 
-  /*
-   * (non-Javadoc)
-   *
-   * @see org.jdiameter.api.EventListener#timeoutExpired(org.jdiameter.api.
-   * Message)
-   */
   @Override
   public void timeoutExpired(Request request) {
-
-
+    log.warn("Request timed out: " + request.getCommandCode());
+    try {
+      if (nextRequestNumber <= 2) {
+        log.info("Retrying request with CC-Request-Type: " + (nextRequestNumber == 1 ? 1 : 2));
+        sendCreditControlRequest(nextRequestNumber == 1 ? 1 : 2, nextRequestNumber == 1 ? initialUnits : updateUnits);
+      } else {
+        sendCreditControlRequest(3, 0);
+      }
+    } catch (Exception e) {
+      log.error("Failed to send request", e);
+      if (session != null) {
+        session.release();
+        session = null;
+      }
+    }
   }
 
   private void dumpMessage(Message message, boolean sending) {
     if (log.isInfoEnabled()) {
-      log.info((sending?"Sending ":"Received ") + (message.isRequest() ? "Request: " : "Answer: ") + message.getCommandCode() + "\nE2E:"
-          + message.getEndToEndIdentifier() + "\nHBH:" + message.getHopByHopIdentifier() + "\nAppID:" + message.getApplicationId());
-      log.info("AVPS["+message.getAvps().size()+"]: \n");
+      log.info((sending ? "Sending " : "Received ") + (message.isRequest() ? "Request: " : "Answer: ") + message.getCommandCode() + "\nE2E:"
+              + message.getEndToEndIdentifier() + "\nHBH:" + message.getHopByHopIdentifier() + "\nAppID:" + message.getApplicationId());
+      log.info("AVPS[" + message.getAvps().size() + "]: \n");
       try {
         printAvps(message.getAvps());
       } catch (AvpDataException e) {
-        // TODO Auto-generated catch block
         e.printStackTrace();
       }
     }
@@ -375,29 +267,16 @@ public class ExampleClient implements EventListener<Request, Answer> {
     printAvpsAux(avpSet, 0);
   }
 
-  /**
-   * Prints the AVPs present in an AvpSet with a specified 'tab' level
-   *
-   * @param avpSet
-   *            the AvpSet containing the AVPs to be printed
-   * @param level
-   *            an int representing the number of 'tabs' to make a pretty
-   *            print
-   * @throws AvpDataException
-   */
   private void printAvpsAux(AvpSet avpSet, int level) throws AvpDataException {
     String prefix = "                      ".substring(0, level * 2);
-
     for (Avp avp : avpSet) {
       AvpRepresentation avpRep = AvpDictionary.INSTANCE.getAvp(avp.getCode(), avp.getVendorId());
-
       if (avpRep != null && avpRep.getType().equals("Grouped")) {
         log.info(prefix + "<avp name=\"" + avpRep.getName() + "\" code=\"" + avp.getCode() + "\" vendor=\"" + avp.getVendorId() + "\">");
         printAvpsAux(avp.getGrouped(), level + 1);
         log.info(prefix + "</avp>");
       } else if (avpRep != null) {
         String value = "";
-
         if (avpRep.getType().equals("Integer32"))
           value = String.valueOf(avp.getInteger32());
         else if (avpRep.getType().equals("Integer64") || avpRep.getType().equals("Unsigned64"))
@@ -407,28 +286,26 @@ public class ExampleClient implements EventListener<Request, Answer> {
         else if (avpRep.getType().equals("Float32"))
           value = String.valueOf(avp.getFloat32());
         else
-          //value = avp.getOctetString();
           value = new String(avp.getOctetString(), StandardCharsets.UTF_8);
-
         log.info(prefix + "<avp name=\"" + avpRep.getName() + "\" code=\"" + avp.getCode() + "\" vendor=\"" + avp.getVendorId()
-            + "\" value=\"" + value + "\" />");
+                + "\" value=\"" + value + "\" />");
       }
     }
   }
 
   public static void main(String[] args) {
-    ExampleClient ec = new ExampleClient();
-    ec.initStack();
-    ec.start();
-
-    while (!ec.finished()) {
-      try {
-        Thread.currentThread().sleep(5000);
-      } catch (InterruptedException e) {
-        // TODO Auto-generated catch block
-        e.printStackTrace();
+    ExampleClient client = new ExampleClient();
+    client.initStack();
+    client.start();
+    Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+      if (client.session != null) {
+        client.session.release();
+        log.info("Session released");
       }
-    }
+      if (client.stack != null) {
+        client.stack.destroy();
+        log.info("Stack destroyed");
+      }
+    }));
   }
-
 }
